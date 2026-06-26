@@ -1,0 +1,28 @@
+services:
+  grobid:
+    image: lfoppiano/grobid:0.8.1
+    container_name: grobid
+    ports:
+      - "8070:8070"
+    ulimits:
+      core: 0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8070/api/isalive"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  pipeline:
+    build: .
+    container_name: open-science-pipeline
+    env_file:
+      - .env
+    environment:
+      - GROBID_URL=http://grobid:8070
+    depends_on:
+      grobid:
+        condition: service_healthy
+    volumes:
+      - ./tmp:/app/tmp
+    restart: "no"
