@@ -2,10 +2,13 @@
 import os
 import fitz  # PyMuPDF
 
+THUMBNAIL_SIZE = (135, 175)  # (width, height)
+
 
 def extract_figure_images(pdf_path: str, figures: list[dict], out_dir: str) -> list[dict]:
-    """For each figure with boxes, crop the union region and save a PNG.
-    Returns list of {'figure': fig, 'image_path': path}."""
+    """For each figure with boxes, crop the union region and save a PNG, plus a
+    135x175 JPEG thumbnail.
+    Returns list of {'figure': fig, 'image_path': path, 'thumbnail_path': path}."""
     os.makedirs(out_dir, exist_ok=True)
     doc = fitz.open(pdf_path)
     results = []
@@ -41,7 +44,32 @@ def extract_figure_images(pdf_path: str, figures: list[dict], out_dir: str) -> l
         pix = page.get_pixmap(matrix=mat, clip=rect)
         img_path = os.path.join(out_dir, f"figure_{idx}_{fig.get('type','fig')}.png")
         pix.save(img_path)
-        results.append({"figure": fig, "image_path": img_path})
+
+        # ---- Thumbnail (135x175 JPEG) ----
+        thumb_path = os.path.join(out_dir, f"figure_{idx}_{fig.get('type','fig')}_thumb.jpg")
+        thumb_path = _make_thumbnail(pix, thumb_path)
+
+        results.append({
+            "figure": fig,
+            "image_path": img_path,
+            "thumbnail_path": thumb_path,
+        })
 
     doc.close()
     return results
+
+
+def _make_thumbnail(pix: "fitz.Pixmap", thumb_path: str) -> str | None:
+    """Resize a PyMuPDF pixmap to THUMBNAIL_SIZE and save as JPEG."""
+    try:
+        # JPEG has no alpha channel; drop it if present.
+        if pix.alpha:
+            pix = fitz.Pixmap(pix, 0)  # remove alpha
+
+        w, h = THUMBNAIL_SIZE
+        thumb = fitz.Pixmap(pix, w, h)  # scale to exact target dimensions
+        thumb.save(thumb_path, jpg_quality=85)
+        return thumb_path
+    except Exception as e:  # noqa
+        print(f"[THUMBNAIL] Failed to create figure thumbnail: {e}")
+        return None

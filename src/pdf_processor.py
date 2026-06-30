@@ -13,6 +13,7 @@ from .storage import upload_figure
 from .citation import generate_apa_citation
 from .embeddings import embed_text
 from .vector_db import article_already_ingested, upsert_vectors
+from .storage import upload_figure, upload_thumbnail
 
 
 def _article_uid_from_download_url(download_url: str) -> str:
@@ -63,6 +64,7 @@ def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
         "citation": citation,
         "url": page_url,
         "download_url": download_url,
+        "pdf_thumbnail_url": item.get("pdf_thumbnail_url") or "",
     }
 
     vectors = []
@@ -85,9 +87,19 @@ def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
     for j, ex in enumerate(extracted):
         fig = ex["figure"]
         img_path = ex["image_path"]
+        thumb_path = ex.get("thumbnail_path")
+
+        # Upload full-resolution figure
         key = f"{article_uid}/figure_{j}.png"
         image_url = upload_figure(img_path, key)
         print(f"[S3] Uploaded figure image -> {image_url}")
+
+        # Upload figure thumbnail (135x175 JPEG), if it was created
+        image_thumbnail_url = ""
+        if thumb_path and os.path.isfile(thumb_path):
+            thumb_key = f"{article_uid}/figure_{j}_thumb.jpg"
+            image_thumbnail_url = upload_thumbnail(thumb_path, thumb_key)
+            print(f"[S3] Uploaded figure thumbnail -> {image_thumbnail_url}")
 
         fig_text = fig["text"] or f"{fig['type']} {j}"
         emb = embed_text(fig_text)
@@ -99,6 +111,7 @@ def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
                 "text": fig_text,
                 "section": fig["type"],
                 "image_url": image_url,
+                "image_thumbnail_url": image_thumbnail_url,
             },
         })
 

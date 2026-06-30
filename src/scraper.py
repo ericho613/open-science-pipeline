@@ -57,7 +57,7 @@ def _compute_worker_count(num_targets: int) -> int:
 
 
 async def _resolve_pdf_url(page, item_url: str) -> dict | None:
-    """Navigate to an item page and extract the download url."""
+    """Navigate to an item page and extract the download url + thumbnail url."""
     try:
         await page.goto(item_url, wait_until="networkidle", timeout=60000)
         # Wait for the download-link component to appear
@@ -69,7 +69,21 @@ async def _resolve_pdf_url(page, item_url: str) -> dict | None:
         download_url = _relative_to_download_url(relative)
         if not download_url:
             return None
-        return {"url": item_url, "download_url": download_url}
+
+        # ---- PDF thumbnail (best-effort; may be absent) ----
+        pdf_thumbnail_url = None
+        try:
+            thumb_img = await page.query_selector("ds-thumbnail img")
+            if thumb_img:
+                pdf_thumbnail_url = await thumb_img.get_attribute("src")
+        except Exception:  # noqa
+            pdf_thumbnail_url = None
+
+        return {
+            "url": item_url,
+            "download_url": download_url,
+            "pdf_thumbnail_url": pdf_thumbnail_url,
+        }
     except Exception as e:  # noqa
         print(f"[SCRAPE] Could not resolve {item_url}: {e}")
         return None
