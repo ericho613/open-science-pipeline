@@ -42,7 +42,7 @@ cp .env-example .env   # fill in values
 
 ### Run GROBID locally
 ```bash
-docker run -p 8070:8070 lfoppiano/grobid:0.8.1
+docker run -d -p 8070:8070 lfoppiano/grobid:0.8.1
 ```
 
 ### Run the pipeline
