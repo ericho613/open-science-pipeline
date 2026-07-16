@@ -2,22 +2,31 @@
 import os
 import asyncio
 import aiohttp
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 
 from .config import config
 from .scraper import fetch_all_item_hrefs, resolve_pdf_download_urls
 from .pdf_processor import download_pdf, process_pdf_sync, cleanup
 from .vector_db import get_index
+from .grobid_client import is_alive
+from tenacity import RetryError
+
 
 
 async def _download_and_dispatch(items: list[dict], index):
     os.makedirs(config.TEMP_DIR, exist_ok=True)
     download_sem = asyncio.Semaphore(config.MAX_DOWNLOAD_CONCURRENCY)
+
+    # I/O-bound work (GROBID/Bedrock/S3/Pinecone network calls) -> threads.
+    # A ThreadPoolExecutor is correct here because the GIL is released during
+    # blocking I/O; a ProcessPoolExecutor would add serialization overhead
+    # (the Pinecone `index` object isn't trivially picklable) for no benefit.
     process_pool = ThreadPoolExecutor(max_workers=config.MAX_PROCESS_WORKERS)
     loop = asyncio.get_running_loop()
 
     processed_count = 0
     total = len(items)
+    count_lock = asyncio.Lock()
 
     async with aiohttp.ClientSession() as session:
 
@@ -38,15 +47,20 @@ async def _download_and_dispatch(items: list[dict], index):
                     process_pool, process_pdf_sync, pdf_path, article_dir, item, index
                 )
                 if n > 0:
-                    processed_count += 1
+                    async with count_lock:
+                        processed_count += 1
+                        current = processed_count
                     print(
                         f"[DONE] Finished PDF. "
-                        f"Total processed: {processed_count}/{total}"
+                        f"Total processed: {current}/{total}"
                     )
+            except RetryError as e:
+                cause = e.last_attempt.exception()
+                print(f"[ERROR] Processing failed for {item['url']}: "
+                      f"{type(cause).__name__}: {cause}")
             except Exception as e:  # noqa
                 print(f"[ERROR] Processing failed for {item['url']}: {e}")
             finally:
-                # Delete PDF + TEI/work artifacts
                 cleanup(article_dir)
 
         await asyncio.gather(*(handle(it) for it in items))
@@ -60,7 +74,17 @@ async def run():
     print("[START] Open Science Canada PDF pipeline beginning.")
     print("=" * 60)
 
-    # 1. Scrape item hrefs
+    # 1. Pre-flight: verify GROBID is reachable
+    if not is_alive():
+        print(
+            f"[FATAL] GROBID is not reachable at {config.GROBID_URL}.\n"
+            f"        Start it with:  docker run -d -p 8070:8070 lfoppiano/grobid:0.8.1\n"
+            f"        Then verify:    curl {config.GROBID_URL}/api/isalive\n"
+            f"        (Local runs need GROBID_URL=http://localhost:8070, "
+            f"not http://grobid:8070.)"
+        )
+        return
+
     print("[SCRAPE] Scraping article href links ...")
     item_hrefs = fetch_all_item_hrefs()
     print(f"[SCRAPE] Found {len(item_hrefs)} article href link(s).")

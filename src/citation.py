@@ -1,14 +1,27 @@
 """Generate APA citations via Amazon Bedrock (Claude Haiku)."""
 import json
 import boto3
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from .config import config
+from botocore.exceptions import ClientError
 
 _bedrock = boto3.client("bedrock-runtime", region_name=config.AWS_REGION)
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=15))
+def _is_transient(exc: BaseException) -> bool:
+    if isinstance(exc, ClientError):
+        code = exc.response.get("Error", {}).get("Code", "")
+        # Retry only throttling / transient service errors
+        return code in {"ThrottlingException", "ServiceUnavailableException",
+                        "ModelTimeoutException", "InternalServerException"}
+    return False
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, min=2, max=15),
+    retry=retry_if_exception(_is_transient),
+)
 def generate_apa_citation(title: str, url: str, sample_text: str = "") -> str:
     prompt = (
         "Create an APA 7th edition citation for the following academic article. "

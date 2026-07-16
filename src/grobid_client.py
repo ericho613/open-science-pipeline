@@ -19,3 +19,11 @@ def process_fulltext(pdf_path: str) -> str:
         resp = requests.post(url, files=files, data=data, timeout=300)
     resp.raise_for_status()
     return resp.text
+
+def is_alive() -> bool:
+    """Check whether GROBID is reachable and healthy."""
+    try:
+        resp = requests.get(f"{config.GROBID_URL}/api/isalive", timeout=10)
+        return resp.status_code == 200 and resp.text.strip().lower() == "true"
+    except requests.RequestException:
+        return False

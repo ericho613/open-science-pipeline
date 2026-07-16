@@ -9,11 +9,10 @@ from .config import config
 from .grobid_client import process_fulltext
 from .tei_parser import parse_tei
 from .figure_extractor import extract_figure_images
-from .storage import upload_figure
+from .storage import upload_figure, upload_thumbnail
 from .citation import generate_apa_citation
 from .embeddings import embed_text
 from .vector_db import article_already_ingested, upsert_vectors
-from .storage import upload_figure, upload_thumbnail
 
 
 def _article_uid_from_download_url(download_url: str) -> str:
@@ -53,6 +52,7 @@ def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
     tei_xml = process_fulltext(pdf_path)
     parsed = parse_tei(tei_xml)
     title = parsed["title"]
+    print(f"[PROCESS] Download URL: {item['download_url']}")
     print(f"[PROCESS] Title: {title}")
 
     # ---- Citation ----
@@ -92,14 +92,14 @@ def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
         # Upload full-resolution figure
         key = f"{article_uid}/figure_{j}.png"
         image_url = upload_figure(img_path, key)
-        print(f"[S3] Uploaded figure image -> {image_url}")
+        # print(f"[S3] Uploaded figure image -> {image_url}")
 
         # Upload figure thumbnail (135x175 JPEG), if it was created
         image_thumbnail_url = ""
         if thumb_path and os.path.isfile(thumb_path):
             thumb_key = f"{article_uid}/figure_{j}_thumb.jpg"
             image_thumbnail_url = upload_thumbnail(thumb_path, thumb_key)
-            print(f"[S3] Uploaded figure thumbnail -> {image_thumbnail_url}")
+            # print(f"[S3] Uploaded figure thumbnail -> {image_thumbnail_url}")
 
         fig_text = fig["text"] or f"{fig['type']} {j}"
         emb = embed_text(fig_text)

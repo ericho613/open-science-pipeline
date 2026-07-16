@@ -59,10 +59,29 @@ def _compute_worker_count(num_targets: int) -> int:
 async def _resolve_pdf_url(page, item_url: str) -> dict | None:
     """Navigate to an item page and extract the download url + thumbnail url."""
     try:
-        await page.goto(item_url, wait_until="networkidle", timeout=60000)
-        # Wait for the download-link component to appear
-        await page.wait_for_selector("ds-file-download-link a", timeout=30000)
-        anchor = await page.query_selector("ds-file-download-link a")
+        
+        await page.goto(item_url, wait_until="domcontentloaded", timeout=60000)
+
+        # Try multiple selectors that DSpace variants use
+        anchor = None
+        selectors = [
+            "ds-file-download-link a",
+            "ds-thumbnail + a[href*='/download']",
+            "a[href*='/bitstreams/'][href*='/download']",
+            "ds-item-page-file-section a[href*='/download']",
+        ]
+        for sel in selectors:
+            try:
+                await page.wait_for_selector(sel, timeout=15000, state="attached")
+                anchor = await page.query_selector(sel)
+                if anchor:
+                    break
+            except Exception:
+                continue
+
+
+
+
         if not anchor:
             return None
         relative = await anchor.get_attribute("href")
@@ -91,7 +110,20 @@ async def _resolve_pdf_url(page, item_url: str) -> dict | None:
 
 async def _worker(browser, chunk: list[str], results: list, lock: asyncio.Lock,
                   limit: int | None):
-    context = await browser.new_context()
+    context = await browser.new_context(
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        locale="en-CA",
+        viewport={"width": 1366, "height": 768},
+        extra_http_headers={
+            "Accept-Language": "en-CA,en;q=0.9",
+            "Accept": ("text/html,application/xhtml+xml,application/xml;"
+                       "q=0.9,image/avif,image/webp,*/*;q=0.8"),
+        },
+    )
     page = await context.new_page()
     try:
         for item_url in chunk:
@@ -129,6 +161,7 @@ async def resolve_pdf_download_urls(item_hrefs: list[str]) -> list[dict]:
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
+        # browser = await p.chromium.launch(headless=False, slow_mo=250)
         tasks = [
             _worker(browser, chunk, results, lock, limit)
             for chunk in chunks

@@ -30,7 +30,7 @@ class Config:
     AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
     CITATION_MODEL = os.getenv(
-        "CITATION_MODEL", "anthropic.claude-haiku-4-5-20251001-v1:0"
+        "CITATION_MODEL", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     )
 
     # S3
