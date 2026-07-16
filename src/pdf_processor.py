@@ -9,10 +9,10 @@ from .config import config
 from .grobid_client import process_fulltext
 from .tei_parser import parse_tei
 from .figure_extractor import extract_figure_images
-from .storage import upload_figure, upload_thumbnail
 from .citation import generate_apa_citation
 from .embeddings import embed_text
 from .vector_db import article_already_ingested, upsert_vectors
+from .storage import upload_figure, upload_thumbnail
 
 
 def _article_uid_from_download_url(download_url: str) -> str:
@@ -38,7 +38,13 @@ async def download_pdf(session: aiohttp.ClientSession, download_url: str,
 
 def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
     """Blocking CPU/IO heavy work: GROBID -> TEI -> figures -> embeddings.
-    Returns number of vectors upserted (0 if skipped)."""
+    Returns number of vectors upserted (0 if skipped).
+
+    NOTE: Vectors are created ONLY for TEI text sections. Any figures/tables
+    belonging to a section are cropped, uploaded to S3, and their URLs are
+    attached to that section's vector via the parallel `image_urls` /
+    `image_thumbnail_urls` metadata arrays.
+    """
     download_url = item["download_url"]
     page_url = item["url"]
     article_uid = _article_uid_from_download_url(download_url)
@@ -67,51 +73,76 @@ def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
         "pdf_thumbnail_url": item.get("pdf_thumbnail_url") or "",
     }
 
+    fig_dir = os.path.join(work_dir, "figures")
     vectors = []
 
-    # ---- Text sections ----
+    # Global counter so figure filenames/S3 keys stay unique across sections.
+    fig_counter = 0
+
+    # ---- Text sections (the ONLY vectors we create) ----
     for i, sec in enumerate(parsed["sections"]):
-        text = f"{sec['heading']}\n{sec['text']}".strip()
-        if not text:
+        section_figures = sec.get("figures") or []
+
+        # Extract + upload this section's figures -> parallel URL arrays.
+        image_urls: list[str] = []
+        image_thumbnail_urls: list[str] = []
+
+        if section_figures:
+            extracted = extract_figure_images(pdf_path, section_figures, fig_dir)
+            for ex in extracted:
+                img_path = ex["image_path"]
+                thumb_path = ex.get("thumbnail_path")
+
+                # Upload full-resolution figure.
+                key = f"{article_uid}/figure_{fig_counter}.png"
+                image_url = upload_figure(img_path, key)
+
+                # Upload figure thumbnail (135x175 JPEG); keep arrays aligned.
+                thumb_key = f"{article_uid}/figure_{fig_counter}_thumb.jpg"
+                if thumb_path and os.path.isfile(thumb_path):
+                    image_thumbnail_url = upload_thumbnail(thumb_path, thumb_key)
+                else:
+                    # No thumbnail produced — store empty string to preserve
+                    # positional correspondence between the two arrays.
+                    image_thumbnail_url = ""
+
+                image_urls.append(image_url)
+                image_thumbnail_urls.append(image_thumbnail_url)
+                fig_counter += 1
+
+        # Build the text to embed. Include figure captions so the section
+        # vector remains searchable by figure/table content.
+        text_parts = []
+        heading = sec.get("heading", "").strip()
+        body_text = sec.get("text", "").strip()
+        if heading:
+            text_parts.append(heading)
+        if body_text:
+            text_parts.append(body_text)
+        for fig in section_figures:
+            fig_caption = (fig.get("text") or "").strip()
+            if fig_caption:
+                text_parts.append(fig_caption)
+        text = "\n".join(text_parts).strip()
+
+        # Skip empty sections that also produced no figures — nothing to embed.
+        if not text and not image_urls:
             continue
-        emb = embed_text(text)
+
+        # If there's no text at all but there ARE figures, embed the captions
+        # (already folded into `text` above); if still empty, fall back to title.
+        embed_input = text or title
+
+        emb = embed_text(embed_input)
         vectors.append({
             "id": f"{article_uid}-sec-{i}",
             "values": emb,
-            "metadata": {**base_meta, "text": text, "section": sec["heading"]},
-        })
-
-    # ---- Figures / Tables ----
-    fig_dir = os.path.join(work_dir, "figures")
-    extracted = extract_figure_images(pdf_path, parsed["figures"], fig_dir)
-    for j, ex in enumerate(extracted):
-        fig = ex["figure"]
-        img_path = ex["image_path"]
-        thumb_path = ex.get("thumbnail_path")
-
-        # Upload full-resolution figure
-        key = f"{article_uid}/figure_{j}.png"
-        image_url = upload_figure(img_path, key)
-        # print(f"[S3] Uploaded figure image -> {image_url}")
-
-        # Upload figure thumbnail (135x175 JPEG), if it was created
-        image_thumbnail_url = ""
-        if thumb_path and os.path.isfile(thumb_path):
-            thumb_key = f"{article_uid}/figure_{j}_thumb.jpg"
-            image_thumbnail_url = upload_thumbnail(thumb_path, thumb_key)
-            # print(f"[S3] Uploaded figure thumbnail -> {image_thumbnail_url}")
-
-        fig_text = fig["text"] or f"{fig['type']} {j}"
-        emb = embed_text(fig_text)
-        vectors.append({
-            "id": f"{article_uid}-fig-{j}",
-            "values": emb,
             "metadata": {
                 **base_meta,
-                "text": fig_text,
-                "section": fig["type"],
-                "image_url": image_url,
-                "image_thumbnail_url": image_thumbnail_url,
+                "text": text,
+                "section": heading or "Section",
+                "image_urls": image_urls,
+                "image_thumbnail_urls": image_thumbnail_urls,
             },
         })
 

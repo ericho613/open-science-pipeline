@@ -11,7 +11,12 @@ def _text(el) -> str:
 
 
 def parse_tei(tei_xml: str) -> dict:
-    """Return {'title', 'sections': [...], 'figures': [...]}"""
+    """Return {'title', 'sections': [...]}.
+
+    Each section is:
+        {'heading': str, 'text': str, 'figures': [figure_dict, ...]}
+    Figures are attached to the section (TEI <div>) that contains them.
+    """
     root = etree.fromstring(tei_xml.encode("utf-8"))
 
     # ---- Title ----
@@ -20,12 +25,20 @@ def parse_tei(tei_xml: str) -> dict:
 
     sections: list[dict] = []
 
+    # track figure elements already attached
+    claimed_figures: set = set()
+
     # ---- Abstract ----
     abstract_el = root.find(".//tei:profileDesc/tei:abstract", TEI_NS)
     if abstract_el is not None:
         abstract_text = _text(abstract_el)
-        if abstract_text:
-            sections.append({"heading": "Abstract", "text": abstract_text})
+        abstract_figs = _parse_figures(abstract_el, claimed_figures)
+        if abstract_text or abstract_figs:
+            sections.append({
+                "heading": "Abstract",
+                "text": abstract_text,
+                "figures": abstract_figs,
+            })
 
     # ---- Body divisions (introduction, methods, results, etc.) ----
     body = root.find(".//tei:text/tei:body", TEI_NS)
@@ -35,8 +48,26 @@ def parse_tei(tei_xml: str) -> dict:
             heading = _text(head_el) or "Section"
             paragraphs = [_text(p) for p in div.findall("tei:p", TEI_NS)]
             div_text = "\n".join([p for p in paragraphs if p])
-            if div_text:
-                sections.append({"heading": heading, "text": div_text})
+
+            # Figures contained anywhere within this div's subtree.
+            div_figs = _parse_figures(div, claimed_figures)
+
+            if div_text or div_figs:
+                sections.append({
+                    "heading": heading,
+                    "text": div_text,
+                    "figures": div_figs,
+                })
+
+        # ---- Orphan figures: figures in <body> not inside any parsed div ----
+        orphan_figs = _parse_figures(body, claimed_figures)
+        if orphan_figs:
+            # Attach to a dedicated section so their images aren't lost.
+            sections.append({
+                "heading": "Figures",
+                "text": "",
+                "figures": orphan_figs,
+            })
 
     # ---- References ----
     refs = root.findall(".//tei:back//tei:listBibl/tei:biblStruct", TEI_NS)
@@ -44,12 +75,13 @@ def parse_tei(tei_xml: str) -> dict:
         ref_texts = [_text(r) for r in refs]
         ref_block = "\n".join([r for r in ref_texts if r])
         if ref_block:
-            sections.append({"heading": "References", "text": ref_block})
+            sections.append({
+                "heading": "References",
+                "text": ref_block,
+                "figures": [],
+            })
 
-    # ---- Figures & Tables (with coordinates) ----
-    figures = _parse_figures(root)
-
-    return {"title": title, "sections": sections, "figures": figures}
+    return {"title": title, "sections": sections}
 
 
 def _parse_coords(coords_str: str) -> list[dict]:
@@ -71,9 +103,19 @@ def _parse_coords(coords_str: str) -> list[dict]:
     return boxes
 
 
-def _parse_figures(root) -> list[dict]:
+def _parse_figures(scope_el, claimed_figures: set) -> list[dict]:
+    """Parse all <figure> elements within scope_el's subtree.
+
+    Figures already attached to a previous section (tracked in
+    `claimed_figures`) are skipped so no figure is processed twice.
+    """
     figures = []
-    for fig in root.findall(".//tei:figure", TEI_NS):
+    for fig in scope_el.findall(".//tei:figure", TEI_NS):
+        # Skip figures already claimed by an enclosing/earlier section.
+        if fig in claimed_figures:
+            continue
+        claimed_figures.add(fig)
+
         fig_type = fig.get("type", "figure")
         label_el = fig.find("tei:head", TEI_NS)
         label = _text(label_el)
@@ -87,7 +129,8 @@ def _parse_figures(root) -> list[dict]:
 
         figures.append({
             "id": fig_id,
-            "type": fig_type,        # 'figure' or 'table'
+            # 'figure' or 'table'
+            "type": fig_type,
             "label": label,
             "description": desc,
             "boxes": boxes,

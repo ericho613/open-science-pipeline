@@ -1,5 +1,6 @@
 """Crop figures/tables from a PDF into PNG images using PyMuPDF."""
 import os
+import uuid
 import fitz  # PyMuPDF
 
 THUMBNAIL_SIZE = (135, 175)  # (width, height)
@@ -8,12 +9,17 @@ THUMBNAIL_SIZE = (135, 175)  # (width, height)
 def extract_figure_images(pdf_path: str, figures: list[dict], out_dir: str) -> list[dict]:
     """For each figure with boxes, crop the union region and save a PNG, plus a
     135x175 JPEG thumbnail.
-    Returns list of {'figure': fig, 'image_path': path, 'thumbnail_path': path}."""
+
+    Returns a list of {'figure', 'image_path', 'thumbnail_path'} in the SAME
+    order as the input `figures` list (skipping figures with no usable boxes).
+    Filenames are made unique per figure so repeated calls that share `out_dir`
+    do not overwrite one another.
+    """
     os.makedirs(out_dir, exist_ok=True)
     doc = fitz.open(pdf_path)
     results = []
 
-    for idx, fig in enumerate(figures):
+    for fig in figures:
         boxes = fig.get("boxes") or []
         if not boxes:
             continue
@@ -39,14 +45,19 @@ def extract_figure_images(pdf_path: str, figures: list[dict], out_dir: str) -> l
         if rect.is_empty:
             continue
 
+        # Unique on-disk stem (TEI id if present, else a random hex).
+        stem = fig.get("id") or uuid.uuid4().hex
+        stem = _safe_stem(stem)
+        fig_type = fig.get("type", "fig")
+
         # Render at 2x for clarity
         mat = fitz.Matrix(2, 2)
         pix = page.get_pixmap(matrix=mat, clip=rect)
-        img_path = os.path.join(out_dir, f"figure_{idx}_{fig.get('type','fig')}.png")
+        img_path = os.path.join(out_dir, f"figure_{stem}_{fig_type}.png")
         pix.save(img_path)
 
         # ---- Thumbnail (135x175 JPEG) ----
-        thumb_path = os.path.join(out_dir, f"figure_{idx}_{fig.get('type','fig')}_thumb.jpg")
+        thumb_path = os.path.join(out_dir, f"figure_{stem}_{fig_type}_thumb.jpg")
         thumb_path = _make_thumbnail(pix, thumb_path)
 
         results.append({
@@ -57,6 +68,11 @@ def extract_figure_images(pdf_path: str, figures: list[dict], out_dir: str) -> l
 
     doc.close()
     return results
+
+
+def _safe_stem(value: str) -> str:
+    """Make a filesystem-safe stem from a figure id."""
+    return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in value)
 
 
 def _make_thumbnail(pix: "fitz.Pixmap", thumb_path: str) -> str | None:
