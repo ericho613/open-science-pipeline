@@ -24,11 +24,11 @@ COPY pyproject.toml requirements.txt ./
 # Sync deps via uv
 RUN uv venv && uv pip install -r requirements.txt
 
-# Install Playwright browsers + deps
-RUN uv run playwright install --with-deps chromium
+# Install Playwright browsers + deps (skip building this project)
+RUN uv run --no-project playwright install --with-deps chromium
 
 # Copy source
 COPY src/ ./src/
-COPY .env ./
+# COPY .env ./
 
-CMD ["uv", "run", "python", "-m", "src.main"]
+CMD ["uv", "run", "--no-project", "python", "-m", "src.main"]
