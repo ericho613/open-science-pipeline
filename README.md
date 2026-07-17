@@ -53,9 +53,22 @@ uv run python -m src.main
 ## Run with Docker Compose (recommended)
 ```bash
 cp .env-example .env   # fill in values
-docker compose up --build
+
+# Build all services, but only follow logs for the "pipeline" service
+
+# For Bash
+docker compose up --build -d && docker compose logs -f pipeline
+
+# For CMD or PowerShell
+docker compose up --build -d ; docker compose logs -f pipeline
+
 ```
 GROBID starts first; the pipeline waits for it to be healthy.
+
+## Stop with Docker Compose
+```bash
+docker compose down
+```
 
 ## Environment variables
 
@@ -71,11 +84,16 @@ GROBID starts first; the pipeline waits for it to be healthy.
 | `S3_PUBLIC_BASE_URL` | Optional CDN/public base URL |
 | `PINECONE_API_KEY` | Pinecone API key |
 | `PINECONE_INDEX_NAME` | Pinecone index name |
-| `PINECONE_DIMENSION` | Embedding dimension (Titan v2 = 1024) |
+| `VECTOR_DB_PROVIDER` | 'pinecone' or 's3vectors' |
+| `VECTOR_DIMENSION` | Embedding dimension (Titan v2 = 1024) |
+| `S3_VECTORS_BUCKET` | S3 vector bucket for vector embeddings |
+| `S3_VECTORS_INDEX_NAME` | S3 vectors index name |
+| `S3_VECTORS_DISTANCE_METRIC` | S3 vectors distance medtric |
+| `S3_VECTORS_REGION` | AWS region for S3 vectors |
 | `MAX_DOWNLOAD_CONCURRENCY` | Concurrent PDF downloads |
 | `MAX_PROCESS_WORKERS` | Threads for GROBID/embedding work |
 
 ## Notes
-- Titan v2 supports `dimensions` of 256/512/1024 — keep `PINECONE_DIMENSION`
+- Titan v2 supports `dimensions` of 256/512/1024 — keep `VECTOR_DIMENSION`
   matched to it.
 - PDFs and TEI artifacts are deleted after each article is processed.
