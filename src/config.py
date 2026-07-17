@@ -33,16 +33,33 @@ class Config:
         "CITATION_MODEL", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     )
 
-    # S3
+    # S3 (figure/thumbnail image storage)
     S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
     S3_PUBLIC_BASE_URL = os.getenv("S3_PUBLIC_BASE_URL", "")
+
+    # ---- Vector DB provider selection ----
+    # "pinecone" or "s3vectors"
+    VECTOR_DB_PROVIDER = os.getenv("VECTOR_DB_PROVIDER", "pinecone").strip().lower()
+
+    # Shared: dimension of the embedding vectors
+    VECTOR_DIMENSION = _get_int("VECTOR_DIMENSION", 1024)
 
     # Pinecone
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "open-science-articles")
     PINECONE_CLOUD = os.getenv("PINECONE_CLOUD", "aws")
     PINECONE_REGION = os.getenv("PINECONE_REGION", "us-east-1")
-    PINECONE_DIMENSION = _get_int("PINECONE_DIMENSION", 1024)
+
+    # Amazon S3 Vectors
+    S3_VECTORS_BUCKET = os.getenv("S3_VECTORS_BUCKET")
+    S3_VECTORS_INDEX_NAME = os.getenv(
+        "S3_VECTORS_INDEX_NAME", "open-science-articles"
+    )
+    # cosine | euclidean
+    S3_VECTORS_DISTANCE_METRIC = os.getenv(
+        "S3_VECTORS_DISTANCE_METRIC", "cosine"
+    )
+    S3_VECTORS_REGION = os.getenv("S3_VECTORS_REGION", AWS_REGION)
 
     # Concurrency
     MAX_DOWNLOAD_CONCURRENCY = _get_int("MAX_DOWNLOAD_CONCURRENCY", 5)
