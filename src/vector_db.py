@@ -1,40 +1,40 @@
-"""Pinecone vector database helpers with deduplication support."""
-from pinecone import Pinecone, ServerlessSpec
-from .config import config
+"""Vector database facade.
 
-_pc = Pinecone(api_key=config.PINECONE_API_KEY)
+Selects the backend (Pinecone or Amazon S3 Vectors) based on
+config.VECTOR_DB_PROVIDER and exposes a stable, provider-agnostic API:
+
+    get_index()
+    article_already_ingested(index, article_uid)
+    upsert_vectors(index, vectors, namespace)
+"""
+from .config import config
+from .vector_stores.base import VectorStore
+
+
+def _build_store() -> VectorStore:
+    provider = config.VECTOR_DB_PROVIDER
+    if provider == "pinecone":
+        from .vector_stores.pinecone_store import PineconeStore
+        return PineconeStore()
+    if provider in ("s3vectors", "s3-vectors", "s3_vectors"):
+        from .vector_stores.s3_vectors_store import S3VectorsStore
+        return S3VectorsStore()
+    raise ValueError(
+        f"Unknown VECTOR_DB_PROVIDER '{provider}'. "
+        f"Use 'pinecone' or 's3vectors'."
+    )
+
+
+_store: VectorStore = _build_store()
 
 
 def get_index():
-    existing = [i["name"] for i in _pc.list_indexes()]
-    if config.PINECONE_INDEX_NAME not in existing:
-        _pc.create_index(
-            name=config.PINECONE_INDEX_NAME,
-            dimension=config.PINECONE_DIMENSION,
-            metric="cosine",
-            spec=ServerlessSpec(
-                cloud=config.PINECONE_CLOUD,
-                region=config.PINECONE_REGION,
-            ),
-        )
-    return _pc.Index(config.PINECONE_INDEX_NAME)
+    return _store.get_index()
 
 
 def article_already_ingested(index, article_uid: str) -> bool:
-    """Check whether any vectors for this article already exist.
-    We store all vectors of an article under the namespace == article_uid,
-    so we just check the namespace stats."""
-    try:
-        stats = index.describe_index_stats()
-        namespaces = stats.get("namespaces", {})
-        ns = namespaces.get(article_uid)
-        return bool(ns and ns.get("vector_count", 0) > 0)
-    except Exception:
-        return False
+    return _store.article_already_ingested(index, article_uid)
 
 
 def upsert_vectors(index, vectors: list[dict], namespace: str):
-    """vectors: [{'id','values','metadata'}]; batch upsert."""
-    BATCH = 100
-    for i in range(0, len(vectors), BATCH):
-        index.upsert(vectors=vectors[i:i + BATCH], namespace=namespace)
+    _store.upsert_vectors(index, vectors, namespace)
