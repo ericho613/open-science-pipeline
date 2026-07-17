@@ -6,12 +6,26 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .config import config
 from .scraper import fetch_all_item_hrefs, resolve_pdf_download_urls
-from .pdf_processor import download_pdf, process_pdf_sync, cleanup
+from .pdf_processor import (
+    download_pdf, process_pdf_sync, cleanup, _article_uid_from_download_url
+)
 from .vector_db import get_index
 from .grobid_client import is_alive
 from tenacity import RetryError
 
 
+def _dedupe_items(items: list[dict]) -> list[dict]:
+    """Drop items that resolve to the same article (same deterministic
+    article_uid). Prevents redundant downloads/processing within a run."""
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for it in items:
+        uid = _article_uid_from_download_url(it["download_url"])
+        if uid in seen:
+            continue
+        seen.add(uid)
+        unique.append(it)
+    return unique
 
 async def _download_and_dispatch(items: list[dict], index):
     os.makedirs(config.TEMP_DIR, exist_ok=True)
@@ -91,6 +105,14 @@ async def run():
 
     # 2. Resolve PDF download urls with Playwright workers
     items = await resolve_pdf_download_urls(item_hrefs)
+
+    # De-duplicate by deterministic article_uid so the same PDF is never
+    # downloaded or embedded twice within a single run.
+    before = len(items)
+    items = _dedupe_items(items)
+    if len(items) != before:
+        print(f"[INFO] Removed {before - len(items)} duplicate article(s).")
+
     print(f"[INFO] {len(items)} PDF(s) will be processed.")
 
     if not items:
