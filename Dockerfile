@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Ensure logs are flushed immediately (no buffering)
+ENV PYTHONUNBUFFERED=1
+
 # System deps for PyMuPDF, Playwright, lxml
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -29,6 +32,8 @@ RUN uv run --no-project playwright install --with-deps chromium
 
 # Copy source
 COPY src/ ./src/
-# COPY .env ./
+COPY wait-for-grobid.sh /usr/local/bin/wait-for-grobid.sh
+RUN chmod +x /usr/local/bin/wait-for-grobid.sh
 
+ENTRYPOINT ["/usr/local/bin/wait-for-grobid.sh"]
 CMD ["uv", "run", "--no-project", "python", "-m", "src.main"]
