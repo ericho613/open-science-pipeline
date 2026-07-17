@@ -58,8 +58,7 @@ def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
     tei_xml = process_fulltext(pdf_path)
     parsed = parse_tei(tei_xml)
     title = parsed["title"]
-    print(f"[PROCESS] Download URL: {item['download_url']}")
-    print(f"[PROCESS] Title: {title}")
+    print(f"[PROCESS] Title: {title}; download URL: {item['download_url']}")
 
     # ---- Citation ----
     sample = parsed["sections"][0]["text"] if parsed["sections"] else ""
