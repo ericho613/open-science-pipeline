@@ -3,7 +3,8 @@
 S3 Vectors has no concept of Pinecone-style namespaces. We therefore:
   - store `article_uid` inside each vector's metadata,
   - prefix each vector key with the uid (`<uid>::<id>`), and
-  - detect duplicates via a metadata-filtered query.
+  - detect duplicates via a strongly-consistent key lookup of the first
+    section vector (`<uid>::<uid>-sec-0`).
 """
 import boto3
 
@@ -59,24 +60,41 @@ class S3VectorsStore(VectorStore):
                 },
             )
 
+    @staticmethod
+    def _vector_key(article_uid: str, vector_id: str) -> str:
+        """Deterministic on-disk key for a vector: '<uid>::<id>'."""
+        return f"{article_uid}::{vector_id}"
+
     def article_already_ingested(self, handle, article_uid: str) -> bool:
-        """Query with a metadata filter on article_uid; if any vector comes
-        back, the article is already ingested."""
+        """Return True if this article's vectors already exist.
+
+        We do a STRONGLY-CONSISTENT key lookup instead of a similarity query:
+        every article writes at least one section vector whose id is
+        '<uid>-sec-0', stored under key '<uid>::<uid>-sec-0'. If that key
+        exists, the article has already been ingested.
+
+        This avoids the pitfalls of the previous query-based approach:
+          - no degenerate zero query-vector (undefined under cosine),
+          - not subject to query eventual-consistency lag,
+          - no dependence on filterable-metadata behaviour.
+        """
+        sentinel_key = self._vector_key(article_uid, f"{article_uid}-sec-0")
         try:
-            # We need a query vector; zero vector is fine since we only care
-            # whether the filter matches anything (topK=1).
-            zero = [0.0] * config.VECTOR_DIMENSION
-            resp = self._client.query_vectors(
+            resp = self._client.get_vectors(
                 vectorBucketName=handle["bucket"],
                 indexName=handle["index"],
-                topK=1,
-                queryVector={"float32": zero},
-                filter={"article_uid": article_uid},
+                keys=[sentinel_key],
+                returnData=False,
                 returnMetadata=False,
-                returnDistance=False,
             )
             return len(resp.get("vectors", [])) > 0
+        except self._client.exceptions.NotFoundException:
+            # Index/key not found -> not ingested.
+            return False
         except Exception:
+            # On any unexpected error, fail "not ingested" so we don't silently
+            # skip an article that actually needs processing. Deterministic
+            # vector keys make a redundant re-upsert safe (it overwrites).
             return False
 
     def upsert_vectors(self, handle, vectors: list[dict], namespace: str) -> None:
@@ -96,7 +114,21 @@ class S3VectorsStore(VectorStore):
         metadata = dict(vector.get("metadata") or {})
         metadata["article_uid"] = article_uid
         return {
-            "key": f"{article_uid}::{vector['id']}",
+            "key": S3VectorsStore._vector_key(article_uid, vector["id"]),
             "data": {"float32": vector["values"]},
-            "metadata": metadata,
+            "metadata": S3VectorsStore._clean_metadata(metadata),
         }
+
+    @staticmethod
+    def _clean_metadata(metadata: dict) -> dict:
+        """S3 Vectors rejects empty arrays (and None) in metadata. Strip any
+        empty/None values so PutVectors doesn't raise a ValidationException.
+        Empty lists carry no information anyway, so dropping them is safe."""
+        cleaned = {}
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            if isinstance(value, (list, tuple, str, dict)) and len(value) == 0:
+                continue
+            cleaned[key] = value
+        return cleaned
