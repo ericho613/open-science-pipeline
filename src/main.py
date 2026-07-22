@@ -48,7 +48,10 @@ async def _download_and_dispatch(items: list[dict], index):
             nonlocal processed_count
             article_dir = os.path.join(config.TEMP_DIR, os.urandom(6).hex())
             os.makedirs(article_dir, exist_ok=True)
-            pdf_path = os.path.join(article_dir, "article.pdf")
+            # Neutral name: the downloaded bitstream may be a PDF *or* a Word doc. Don't
+            # imply ".pdf" — magic-byte detection in document_converter decides the type,
+            # and a neutral stem prevents the converted PDF from overwriting the source.
+            pdf_path = os.path.join(article_dir, "bitstream")
 
             async with download_sem:
                 ok = await download_pdf(session, item["download_url"], pdf_path)
