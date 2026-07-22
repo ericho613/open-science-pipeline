@@ -25,10 +25,8 @@ def _is_transient(exc: BaseException) -> bool:
 def generate_apa_citation(title: str, url: str, sample_text: str = "") -> str:
     prompt = (
         "Create an APA 7th edition citation for the following academic article. "
-        "Return ONLY the citation text, no preamble.\n\n"
-        f"Title: {title}\n"
-        f"URL: {url}\n"
-        f"Excerpt: {sample_text[:1500]}\n"
+        "Return ONLY the citation text, no preamble. If you cannot create a citation with the exerpt provided, return an empty string\n\n"
+        f"Excerpt: {sample_text}\n"
     )
     body = {
         "anthropic_version": "bedrock-2023-05-31",
