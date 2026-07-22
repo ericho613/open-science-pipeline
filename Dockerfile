@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
     ca-certificates \
+    libreoffice \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
