@@ -92,6 +92,7 @@ docker compose down
 | `S3_VECTORS_REGION` | AWS region for S3 vectors |
 | `MAX_DOWNLOAD_CONCURRENCY` | Concurrent PDF downloads |
 | `MAX_PROCESS_WORKERS` | Threads for GROBID/embedding work |
+| `MAX_LIBREOFFICE_WORKERS` | Threads for LibreOffice work |
 
 ## Notes
 - Titan v2 supports `dimensions` of 256/512/1024 — keep `VECTOR_DIMENSION`
