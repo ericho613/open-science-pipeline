@@ -64,6 +64,9 @@ class Config:
     # Concurrency
     MAX_DOWNLOAD_CONCURRENCY = _get_int("MAX_DOWNLOAD_CONCURRENCY", 5)
     MAX_PROCESS_WORKERS = _get_int("MAX_PROCESS_WORKERS", 4)
+    # Bound concurrent headless LibreOffice (DOC/DOCX -> PDF) conversions.
+    # Independent of MAX_PROCESS_WORKERS because soffice is memory-heavy.
+    MAX_LIBREOFFICE_WORKERS = _get_int("MAX_LIBREOFFICE_WORKERS", 2)
 
     # Temp
     TEMP_DIR = os.getenv("TEMP_DIR", "./tmp")
