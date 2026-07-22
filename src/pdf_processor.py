@@ -14,6 +14,7 @@ from .citation import generate_apa_citation
 from .embeddings import embed_text
 from .vector_db import article_already_ingested, upsert_vectors
 from .storage import upload_figure, upload_thumbnail
+from .document_converter import ensure_pdf
 
 # ---- In-process dedup guards (single-run protection) ----
 # Prevents two worker threads from processing the same article_uid at the
@@ -102,14 +103,30 @@ def process_pdf_sync(pdf_path: str, work_dir: str, item: dict, index) -> int:
             return 0
 
         # ---- GROBID parse ----
+
+        # GROBID only accepts PDFs. If the downloaded bitstream is a Word
+        # document (.doc/.docx), convert it to PDF first. Rebind pdf_path so
+        # both GROBID and downstream PyMuPDF figure cropping use the PDF.
+        pdf_path = ensure_pdf(pdf_path, work_dir)
         tei_xml = process_fulltext(pdf_path)
         parsed = parse_tei(tei_xml)
         title = parsed["title"]
         print(f"[PROCESS] Title: {title}; download URL: {item['download_url']}")
 
         # ---- Citation ----
-        sample = parsed["sections"][0]["text"] if parsed["sections"] else ""
-        citation = generate_apa_citation(title, page_url, sample)
+        # Prefer the citation scraped directly from the article webpage; only
+        # fall back to LLM-generated APA if it wasn't present on the page.
+        scraped_citation = (item.get("scraped_citation") or "").strip()
+        if scraped_citation:
+            citation = scraped_citation
+            print(f"[CITATION] Using scraped citation for {article_uid}.")
+        else:
+            # sample = parsed["sections"][0]["text"] if parsed["sections"] else ""
+
+            # Only consider the text up to the <abstract> tag if
+            # present; otherwise, consider the first 10000 characters
+            citation = generate_apa_citation(title, page_url, "".join(tei_xml[:(tei_xml.find("<abstract>") or 10000)].split()))
+            print(f"[CITATION] Generated APA citation for {article_uid}.")
 
         base_meta = {
             "title": title,
