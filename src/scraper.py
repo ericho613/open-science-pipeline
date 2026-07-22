@@ -57,9 +57,9 @@ def _compute_worker_count(num_targets: int) -> int:
 
 
 async def _resolve_pdf_url(page, item_url: str) -> dict | None:
-    """Navigate to an item page and extract the download url + thumbnail url."""
+    """Navigate to an item page and extract the download url, thumbnail url,
+    and (if present) the on-page citation text."""
     try:
-        
         await page.goto(item_url, wait_until="domcontentloaded", timeout=60000)
 
         # Try multiple selectors that DSpace variants use
@@ -79,9 +79,6 @@ async def _resolve_pdf_url(page, item_url: str) -> dict | None:
             except Exception:
                 continue
 
-
-
-
         if not anchor:
             return None
         relative = await anchor.get_attribute("href")
@@ -98,10 +95,14 @@ async def _resolve_pdf_url(page, item_url: str) -> dict | None:
         except Exception:  # noqa
             pdf_thumbnail_url = None
 
+        # ---- Scraped citation (best-effort; may be absent) ----
+        scraped_citation = await _extract_scraped_citation(page)
+
         return {
             "url": item_url,
             "download_url": download_url,
             "pdf_thumbnail_url": pdf_thumbnail_url,
+            "scraped_citation": scraped_citation,
         }
     except Exception as e:  # noqa
         print(f"[SCRAPE] Could not resolve {item_url}: {e}")
@@ -174,3 +175,35 @@ async def resolve_pdf_download_urls(item_hrefs: list[str]) -> list[dict]:
 
     print(f"[SCRAPE] Resolved {len(results)} PDF download URL(s).")
     return results
+
+
+async def _extract_scraped_citation(page) -> str | None:
+    """Extract the citation text from the DSpace 'Citation(s)' metadata section.
+
+    The citation lives in a <span> nested inside a <p> inside a
+    <ds-simple-metadata-section> whose <h2> reads 'Citation(s)'. We locate the
+    section by its heading text (robust against the dynamic Angular component
+    id) and return the joined span text, or None if not present.
+    """
+    try:
+        sections = await page.query_selector_all("ds-simple-metadata-section")
+        for section in sections:
+            h2 = await section.query_selector("h2")
+            if not h2:
+                continue
+            heading = (await h2.inner_text() or "").strip().lower()
+            # Match 'Citation' / 'Citation(s)' defensively.
+            if "citation" not in heading:
+                continue
+            spans = await section.query_selector_all("p span")
+            texts = []
+            for span in spans:
+                txt = (await span.inner_text() or "").strip()
+                if txt:
+                    texts.append(txt)
+            citation = " ".join(texts).strip()
+            if citation:
+                return citation
+    except Exception:  # noqa
+        return None
+    return None
